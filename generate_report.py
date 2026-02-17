@@ -21,6 +21,14 @@ def generate_report(index_file, output_file="report.txt"):
 
     unique_tokens = len(index)
 
+    total_postings = sum(len(postings) for postings in index.values())
+    avg_postings_per_token = total_postings / unique_tokens if unique_tokens > 0 else 0
+
+    # Find top 10 most common tokens (by number of documents they appear in)
+    token_doc_counts = [(token, len(postings)) for token, postings in index.items()]
+    token_doc_counts.sort(key=lambda x: x[1], reverse=True)
+    top_10_tokens = token_doc_counts[:10]
+
     report_lines = []
     report_lines.append("=" * 70)
     report_lines.append("INVERTED INDEX ANALYTICS REPORT")
@@ -32,20 +40,19 @@ def generate_report(index_file, output_file="report.txt"):
     report_lines.append(f"| Number of indexed documents         | {doc_count:>28,} |")
     report_lines.append(f"| Number of unique tokens             | {unique_tokens:>28,} |")
     report_lines.append(f"| Total size of index on disk (KB)    | {size_kb:>28,.2f} |")
+    report_lines.append(f"| Total postings                      | {total_postings:>28,} |")
+    report_lines.append(f"| Average postings per token          | {avg_postings_per_token:>28,.2f} |")
     report_lines.append("+" + "-" * 68 + "+")
     report_lines.append("")
 
     report_lines.append("=" * 70)
-    report_lines.append("INDEX STRUCTURE")
+    report_lines.append("TOP 10 MOST COMMON TOKENS")
     report_lines.append("=" * 70)
     report_lines.append("")
-    report_lines.append("The inverted index is structured as follows:")
-    report_lines.append("")
-    report_lines.append("  Token -> List of Postings")
-    report_lines.append("")
-    report_lines.append("Each Posting contains:")
-    report_lines.append("  - Document ID: Unique identifier for the document")
-    report_lines.append("  - Term Frequency (TF): Number of times the token appears in the document")
+    report_lines.append("Token                              | Documents")
+    report_lines.append("-" * 70)
+    for token, doc_count_token in top_10_tokens:
+        report_lines.append(f"{token:<35} | {doc_count_token:>10,}")
     report_lines.append("")
 
     report_lines.append("=" * 70)

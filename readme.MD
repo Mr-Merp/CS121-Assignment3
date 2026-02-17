@@ -41,10 +41,9 @@ HW3/
 - Generates comprehensive analytics including:
   - Number of indexed documents
   - Number of unique tokens
-  - Total index size (in KB and MB)
+  - Total index size in KB
   - Additional statistics (total postings, average postings per token)
   - Top 10 most common tokens
-  - Example index structure
 
 ## Usage
 
