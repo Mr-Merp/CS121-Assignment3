@@ -10,6 +10,7 @@ from tqdm import tqdm
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
 
+
 class Posting:
     """Represents a single posting in the inverted index"""
 
@@ -93,7 +94,7 @@ class InvertedIndex:
         for doc_id, json_file in tqdm(enumerate(json_files), total=len(json_files)):
             try:
                 with open(json_file, 'r', encoding='utf-8') as f:
-                    
+
                     data = json.load(f)
                     url = data.get('url', '')
                     content = data.get('content', '')
@@ -130,18 +131,18 @@ class InvertedIndex:
         """Print analytics about the index"""
         size_kb = self.get_index_size(index_file_path)
 
-        print("\n" + "="*50)
+        print("\n" + "=" * 50)
         print("INVERTED INDEX ANALYTICS")
-        print("="*50)
+        print("=" * 50)
         print(f"Number of indexed documents: {self.doc_count}")
         print(f"Number of unique tokens: {len(self.index)}")
         print(f"Total size of index on disk: {size_kb:.2f} KB")
-        print("="*50)
+        print("=" * 50)
 
 
 def main():
     """Main function to build the inverted index"""
-    dev_folder = "DEV"
+    dev_folder = "DEV 2"
     output_file = "inverted_index.pkl"
 
     index = InvertedIndex()
