@@ -142,7 +142,7 @@ class InvertedIndex:
 
 def main():
     """Main function to build the inverted index"""
-    dev_folder = "DEV 2"
+    dev_folder = "DEV"
     output_file = "inverted_index.pkl"
 
     index = InvertedIndex()
