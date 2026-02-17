@@ -49,7 +49,35 @@ HW3/
 
 ## Usage
 
-### Step 1: Build the Inverted Index
+### Step 1: Create and activate a virtual environment
+
+From the project root:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+For Windows PowerShell:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+### Step 2: Install dependencies
+
+```bash
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Dependencies used in this project:
+- `beautifulsoup4`
+- `tqdm`
+- `nltk`
+
+### Step 3: Build the Inverted Index
 
 ```bash
 python indexer.py
@@ -84,7 +112,7 @@ Total size of index on disk: [size] KB
 ==================================================
 ```
 
-### Step 2: Generate Analytics Report
+### Step 4: Generate Analytics Report
 
 ```bash
 python generate_report.py
