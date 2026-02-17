@@ -11,7 +11,6 @@ from nltk.stem import PorterStemmer
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
 
-
 class Posting:
     """Represents a single posting in the inverted index"""
 
@@ -32,26 +31,32 @@ class InvertedIndex:
         self.doc_id_to_url_total_words = {}
         self.stemmer = PorterStemmer()
 
-    def extract_text_from_html(self, html_content):
-        """Extract text from HTML using BeautifulSoup"""
+    def extract_text_with_weights(self, html_content):
+        """Extract text from HTML with importance weights in a single pass"""
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
 
             for script in soup(['script', 'style', 'meta', 'link']):
                 script.decompose()
 
-            text = soup.get_text(separator=' ')
-            return text
+            important_tags = ['h1', 'h2', 'h3', 'b', 'strong', 'title']
+            important_text = []
+            for tag in soup.find_all(important_tags):
+                important_text.append(tag.get_text())
+
+            all_text = soup.get_text(separator=' ')
+
+            return all_text, ' '.join(important_text)
         except Exception as e:
             print(f"Error parsing HTML: {e}")
-            return ""
+            return "", ""
 
     def tokenize(self, text):
         """
         Tokenize text by splitting on any character that's not alphanumeric
         Returns a list of tokens
         """
-        tokens = re.findall(r'[a-zA-Z0-9]+', text.lower())
+        tokens = re.findall(r'[a-z0-9]+', text.lower())
         return tokens
 
     def compute_term_frequency(self, tokens):
@@ -61,15 +66,24 @@ class InvertedIndex:
             term_freq[token] += 1
         return term_freq
 
+    def add_weighted_frequency(self, term_freq, tokens, weight):
+        """Add weighted term frequency to existing frequency dict"""
+        for token in tokens:
+            term_freq[token] += weight
+
     def add_document(self, doc_id, url, html_content):
         """Process a single document and add it to the index"""
-        text = self.extract_text_from_html(html_content)
+        all_text, important_text = self.extract_text_with_weights(html_content)
 
-        tokens = self.tokenize(text)
+        all_tokens = self.tokenize(all_text)
+        all_tokens = [self.stemmer.stem(token) for token in all_tokens]
 
-        tokens = [self.stemmer.stem(token) for token in tokens]
+        important_tokens = self.tokenize(important_text)
+        important_tokens = [self.stemmer.stem(token) for token in important_tokens]
 
-        term_freq = self.compute_term_frequency(tokens)
+        term_freq = self.compute_term_frequency(all_tokens)
+
+        self.add_weighted_frequency(term_freq, important_tokens, 1)
 
         total = 0
         for token, freq in term_freq.items():
