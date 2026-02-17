@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning, MarkupResemblesLocatorWar
 import pickle
 import warnings
 from tqdm import tqdm
+from nltk.stem import PorterStemmer
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
@@ -28,6 +29,7 @@ class InvertedIndex:
         self.index = defaultdict(list)
         self.doc_count = 0
         self.doc_id_to_url_total_words = {}
+        self.stemmer = PorterStemmer()
 
     def extract_text_from_html(self, html_content):
         """Extract text from HTML using BeautifulSoup"""
@@ -63,6 +65,8 @@ class InvertedIndex:
         text = self.extract_text_from_html(html_content)
 
         tokens = self.tokenize(text)
+
+        tokens = [self.stemmer.stem(token) for token in tokens]
 
         term_freq = self.compute_term_frequency(tokens)
 
