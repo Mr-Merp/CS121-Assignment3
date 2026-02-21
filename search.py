@@ -290,13 +290,12 @@ def main():
     """Prompt for queries and print top 5 URLs."""
     index_dir = "index"
     meta = load_meta(index_dir)
-    stemmer, stemmer_name = build_stemmer()
+    stemmer, _ = build_stemmer()
     shard_cache = {}
     idf_cache = {}
     doc_norm_cache = {}
     doc_map = load_doc_map(index_dir)
 
-    print(f"Stemmer: {stemmer_name}")
     print("Search ready. Type a query, or 'exit' to quit.")
     while True:
         query = input("query> ").strip()
