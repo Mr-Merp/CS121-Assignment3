@@ -1,5 +1,6 @@
 import os
 import pickle
+import heapq
 
 
 def load_meta(index_dir):
@@ -29,21 +30,25 @@ def generate_report(index_dir="index", output_file="report.txt"):
     size_kb = size_bytes / 1024
 
     unique_tokens = meta.get("unique_tokens", 0)
+    shard_count = len(shard_files)
 
     total_postings = 0
-    token_doc_counts = []
+    top_10_heap = []
     for shard_file in shard_files:
         shard_data = load_shard(index_dir, shard_file)
         for token, postings in shard_data.items():
             posting_count = len(postings)
             total_postings += posting_count
-            token_doc_counts.append((token, posting_count))
+
+            if len(top_10_heap) < 10:
+                heapq.heappush(top_10_heap, (posting_count, token))
+            elif posting_count > top_10_heap[0][0]:
+                heapq.heapreplace(top_10_heap, (posting_count, token))
 
     avg_postings_per_token = total_postings / unique_tokens if unique_tokens > 0 else 0
 
-    # Find top 10 most common tokens (by number of documents they appear in)
-    token_doc_counts.sort(key=lambda x: x[1], reverse=True)
-    top_10_tokens = token_doc_counts[:10]
+    # Top 10 most common tokens by number of documents they appear in.
+    top_10_tokens = [(token, count) for count, token in sorted(top_10_heap, reverse=True)]
 
     report_lines = []
     report_lines.append("=" * 70)
@@ -55,6 +60,7 @@ def generate_report(index_dir="index", output_file="report.txt"):
     report_lines.append("+" + "-" * 68 + "+")
     report_lines.append(f"| Number of indexed documents         | {doc_count:>28,} |")
     report_lines.append(f"| Number of unique tokens             | {unique_tokens:>28,} |")
+    report_lines.append(f"| Number of shard files               | {shard_count:>28,} |")
     report_lines.append(f"| Total size of index on disk (KB)    | {size_kb:>28,.2f} |")
     report_lines.append(f"| Total postings                      | {total_postings:>28,} |")
     report_lines.append(f"| Average postings per token          | {avg_postings_per_token:>28,.2f} |")

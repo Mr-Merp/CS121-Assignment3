@@ -1,6 +1,6 @@
-# Inverted Index Builder - CS121 HW3
+# Inverted Index Search Engine - CS121
 
-This project builds an inverted index from HTML web pages stored in JSON format.
+This project builds a positional inverted index from the ICS crawl dataset and supports boolean AND retrieval with TF-IDF ranking.
 
 Group member(s):
 Isaac Zhang
@@ -13,43 +13,44 @@ Student Ids: 63919428, 92644763, 40689120, 38943002
 ## Components
 
 ### 1. Indexer (`indexer.py`)
-- **InvertedIndex Class**: Builds and manages the inverted index
-  - Parses HTML and extracts normal/important text
-  - Uses stemming during indexing (Krovetz if installed, otherwise Porter)
-  - Stores postings as `(doc_id, weighted_tf, positions)`
-  - `add_document()`: Processes a single document
-  - `build_from_directory()`: Processes all JSON files in the DEV folder
-  - `save_sharded_index()`: Saves sharded index files into `index/`
-  - Also saves `index/meta.pkl` and `index/doc_map.pkl`
+- Parses HTML content and boosts important tags (`h1`, `h2`, `h3`, `b`, `strong`, `title`).
+- Uses stemming (Krovetz if available, otherwise Porter).
+- Builds positional postings in format `(doc_id, weighted_tf, positions)`.
+- Saves sharded index files into `index/` using 2-character shard prefixes:
+  - `index/index_<2chars>.pkl`
+  - `index/meta.pkl`
+  - `index/doc_map.pkl`
 
 ### 2. Search (`search.py`)
-- Loads only needed shard files on demand
-- Supports boolean AND retrieval
-- Supports TF-IDF ranking
-- Supports quoted phrase matching using positional postings
-- Prints query latency in milliseconds
+- Loads only needed shards for query terms.
+- Supports boolean AND retrieval.
+- Supports TF-IDF ranking.
+- Supports quoted phrase queries using positional postings.
+- Prints query latency in milliseconds.
 
 ### 3. Report Generator (`generate_report.py`)
-- Loads index metadata and shard files from `index/`
-- Generates comprehensive analytics including:
-  - Number of indexed documents
-  - Number of unique tokens
-  - Total index size in KB
-  - Additional statistics (total postings, average postings per token)
-  - Top 10 most common tokens
+- Reads `index/meta.pkl` and shard files.
+- Reports index analytics:
+  - indexed document count
+  - unique token count
+  - shard file count
+  - total postings
+  - index size on disk
+  - top 10 most frequent tokens by document frequency
 
-## Usage
-
-### Step 1: Create and activate virtual environment
+## Setup
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-```
-
-### Step 2: Install dependencies
-
-```bash
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+```
+
+## Run
+
+```bash
+python indexer.py
+python search.py
+python generate_report.py
 ```
