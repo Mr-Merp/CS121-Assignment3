@@ -151,9 +151,15 @@ class InvertedIndex:
         print(f"Index saved to: {output_path}")
 
     def get_shard_key(self, term):
-        """Return shard key from the first character of term."""
-        first = term[0] if term else "_"
-        return first if first.isalnum() else "_"
+        """Return 2-character shard key from start of term."""
+        if not term:
+            return "__"
+        first = term[0] if term[0].isalnum() else "_"
+        if len(term) > 1:
+            second = term[1] if term[1].isalnum() else "_"
+        else:
+            second = "_"
+        return f"{first}{second}"
 
     def clear_old_index_files(self, index_dir):
         """Remove old generated index files before writing new ones."""

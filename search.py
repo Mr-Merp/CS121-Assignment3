@@ -7,6 +7,8 @@ from nltk.stem import PorterStemmer
 from collections import defaultdict
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+PHRASE_PATTERN = re.compile(r'"([^"]+)"')
+QUOTED_PATTERN = re.compile(r'"[^"]+"')
 
 
 def build_stemmer():
@@ -37,8 +39,8 @@ def load_doc_map(index_dir="index"):
 
 def parse_query(query, stemmer):
     """Parse query into single terms and quoted phrases."""
-    raw_phrases = re.findall(r'"([^"]+)"', query)
-    query_without_phrases = re.sub(r'"[^"]+"', " ", query)
+    raw_phrases = PHRASE_PATTERN.findall(query)
+    query_without_phrases = QUOTED_PATTERN.sub(" ", query)
 
     terms = [stem_token(stemmer, token) for token in TOKEN_PATTERN.findall(query_without_phrases.lower())]
     phrases = []
@@ -60,8 +62,17 @@ def parse_query(query, stemmer):
 
 def load_term_postings(index_dir, term, shard_cache):
     """Load postings for one term by opening only its shard file."""
-    first = term[0] if term else "_"
-    shard_key = first if first.isalnum() else "_"
+    if not term:
+        shard_key = "__"
+        fallback_key = "_"
+    else:
+        first = term[0] if term[0].isalnum() else "_"
+        if len(term) > 1:
+            second = term[1] if term[1].isalnum() else "_"
+        else:
+            second = "_"
+        shard_key = f"{first}{second}"
+        fallback_key = first
     shard_file = f"index_{shard_key}.pkl"
     shard_path = os.path.join(index_dir, shard_file)
 
@@ -70,6 +81,13 @@ def load_term_postings(index_dir, term, shard_cache):
             with open(shard_path, "rb") as f:
                 shard_cache[shard_file] = pickle.load(f)
         else:
+            fallback_file = f"index_{fallback_key}.pkl"
+            fallback_path = os.path.join(index_dir, fallback_file)
+            if os.path.exists(fallback_path):
+                if fallback_file not in shard_cache:
+                    with open(fallback_path, "rb") as f:
+                        shard_cache[fallback_file] = pickle.load(f)
+                return shard_cache[fallback_file].get(term, [])
             shard_cache[shard_file] = {}
 
     return shard_cache[shard_file].get(term, [])
@@ -97,17 +115,61 @@ def boolean_and_retrieve(term_postings, query_terms):
 
     unique_terms = list(dict.fromkeys(query_terms))
     unique_terms.sort(key=lambda term: len(term_postings.get(term, [])))
+    if not unique_terms:
+        return set()
 
-    common_docs = None
-    for term in unique_terms:
+    first_postings = term_postings.get(unique_terms[0], [])
+    common_docs = {posting[0] for posting in first_postings}
+    if not common_docs:
+        return set()
+
+    for term in unique_terms[1:]:
         postings = term_postings.get(term, [])
-        docs_for_term = {doc_id for doc_id, _, _ in (parse_posting(posting) for posting in postings)}
-        if common_docs is None:
-            common_docs = docs_for_term
-        else:
-            common_docs &= docs_for_term
+        next_common_docs = set()
+        for posting in postings:
+            doc_id = posting[0]
+            if doc_id in common_docs:
+                next_common_docs.add(doc_id)
+        common_docs = next_common_docs
+        if not common_docs:
+            break
 
-    return common_docs if common_docs is not None else set()
+    return common_docs
+
+
+def has_phrase_positions(position_lists):
+    """Check whether positional lists contain at least one exact phrase match."""
+    if not position_lists:
+        return False
+    current_starts = position_lists[0]
+    if not current_starts:
+        return False
+
+    for offset in range(1, len(position_lists)):
+        next_positions = position_lists[offset]
+        if not next_positions:
+            return False
+
+        i = 0
+        j = 0
+        matched_starts = []
+        while i < len(current_starts) and j < len(next_positions):
+            target = current_starts[i] + offset
+            pos = next_positions[j]
+            if pos == target:
+                matched_starts.append(current_starts[i])
+                i += 1
+                j += 1
+            elif pos < target:
+                j += 1
+            else:
+                i += 1
+
+        if not matched_starts:
+            return False
+        current_starts = matched_starts
+
+    return True
 
 
 def filter_phrase_candidates(term_postings, phrase_terms, candidate_doc_ids):
@@ -115,41 +177,32 @@ def filter_phrase_candidates(term_postings, phrase_terms, candidate_doc_ids):
     if not phrase_terms:
         return candidate_doc_ids
 
-    term_position_maps = []
-    phrase_docs = None
+    filtered_docs = set(candidate_doc_ids)
+    term_position_maps = {}
     for term in phrase_terms:
         postings = term_postings.get(term, [])
         doc_to_positions = {}
         for posting in postings:
-            doc_id, _, positions = parse_posting(posting)
-            doc_to_positions[doc_id] = positions
-        term_position_maps.append(doc_to_positions)
-        term_docs = set(doc_to_positions.keys())
-        phrase_docs = term_docs if phrase_docs is None else phrase_docs & term_docs
+            doc_id = posting[0]
+            positions = posting[2] if len(posting) > 2 else []
+            if doc_id in filtered_docs:
+                doc_to_positions[doc_id] = positions
+        term_position_maps[term] = doc_to_positions
+        filtered_docs.intersection_update(doc_to_positions.keys())
+        if not filtered_docs:
+            return set()
 
-    if phrase_docs is None:
-        return set()
-
-    filtered_docs = phrase_docs & candidate_doc_ids
     result_docs = set()
     for doc_id in filtered_docs:
-        starts = set(term_position_maps[0].get(doc_id, []))
-        if not starts:
-            continue
-
-        matched = True
-        for offset in range(1, len(term_position_maps)):
-            positions = term_position_maps[offset].get(doc_id, [])
+        position_lists = []
+        for term in phrase_terms:
+            positions = term_position_maps[term].get(doc_id)
             if not positions:
-                matched = False
+                position_lists = []
                 break
-            position_set = set(positions)
-            starts = {start for start in starts if (start + offset) in position_set}
-            if not starts:
-                matched = False
-                break
+            position_lists.append(positions)
 
-        if matched:
+        if position_lists and has_phrase_positions(position_lists):
             result_docs.add(doc_id)
 
     return result_docs
@@ -160,7 +213,26 @@ def compute_idf(doc_count, doc_freq):
     return math.log((doc_count + 1) / (doc_freq + 1)) + 1
 
 
-def rank_with_tfidf(meta, query_terms, candidate_doc_ids, term_postings, doc_map):
+def binary_search_term_freq(postings, target_doc_id):
+    """Binary-search one doc id in a sorted postings list and return tf."""
+    left = 0
+    right = len(postings) - 1
+
+    while left <= right:
+        mid = (left + right) // 2
+        mid_post = postings[mid]
+        mid_doc_id = mid_post[0]
+        if mid_doc_id == target_doc_id:
+            return mid_post[1]
+        if mid_doc_id < target_doc_id:
+            left = mid + 1
+        else:
+            right = mid - 1
+
+    return None
+
+
+def rank_with_tfidf(meta, query_terms, candidate_doc_ids, term_postings, doc_map, idf_cache, doc_norm_cache):
     """Return doc scores using tf-idf with length normalization."""
     scores = defaultdict(float)
     query_tf = defaultdict(int)
@@ -175,21 +247,41 @@ def rank_with_tfidf(meta, query_terms, candidate_doc_ids, term_postings, doc_map
         if not postings:
             continue
 
-        doc_freq = len(postings)
-        idf = compute_idf(doc_count, doc_freq)
+        if term in idf_cache:
+            idf = idf_cache[term]
+        else:
+            idf = compute_idf(doc_count, len(postings))
+            idf_cache[term] = idf
+
         query_weight = (1 + math.log(qf)) * idf
 
-        for posting in postings:
-            doc_id, term_freq, _ = parse_posting(posting)
-            if doc_id not in candidate_set:
-                continue
-            doc_weight = 1 + math.log(term_freq)
-            scores[doc_id] += query_weight * doc_weight
+        # For very common terms, binary search on candidate docs is faster.
+        if len(candidate_set) * math.log2(len(postings) + 1) < len(postings):
+            for doc_id in candidate_set:
+                term_freq = binary_search_term_freq(postings, doc_id)
+                if term_freq is None:
+                    continue
+                doc_weight = 1 + math.log(term_freq)
+                scores[doc_id] += query_weight * doc_weight
+        else:
+            for posting in postings:
+                doc_id = posting[0]
+                term_freq = posting[1]
+                if doc_id not in candidate_set:
+                    continue
+                doc_weight = 1 + math.log(term_freq)
+                scores[doc_id] += query_weight * doc_weight
 
     for doc_id in list(scores.keys()):
+        if doc_id in doc_norm_cache:
+            scores[doc_id] *= doc_norm_cache[doc_id]
+            continue
+
         total_words = doc_map.get(doc_id, ("", 0))[1]
         if total_words > 0:
-            scores[doc_id] /= (1 + math.log(total_words))
+            norm = 1 / (1 + math.log(total_words))
+            doc_norm_cache[doc_id] = norm
+            scores[doc_id] *= norm
 
     return scores
 
@@ -200,7 +292,9 @@ def main():
     meta = load_meta(index_dir)
     stemmer, stemmer_name = build_stemmer()
     shard_cache = {}
-    doc_map = None
+    idf_cache = {}
+    doc_norm_cache = {}
+    doc_map = load_doc_map(index_dir)
 
     print(f"Stemmer: {stemmer_name}")
     print("Search ready. Type a query, or 'exit' to quit.")
@@ -233,10 +327,7 @@ def main():
             print(f"Search takes {elapsed_ms:.2f} ms\n")
             continue
 
-        if doc_map is None:
-            doc_map = load_doc_map(index_dir)
-
-        scores = rank_with_tfidf(meta, all_terms, candidates, term_postings, doc_map)
+        scores = rank_with_tfidf(meta, all_terms, candidates, term_postings, doc_map, idf_cache, doc_norm_cache)
         ranked_ids = sorted(candidates, key=lambda d: scores.get(d, 0.0), reverse=True)
 
         result_lines = []
