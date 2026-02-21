@@ -29,7 +29,21 @@ class InvertedIndex:
         self.index = defaultdict(list)
         self.doc_count = 0
         self.doc_id_to_url_total_words = {}
-        self.stemmer = PorterStemmer()
+        self.stemmer, self.stemmer_name = self.build_stemmer()
+        self.unique_token_count = 0
+        self.token_pattern = re.compile(r"[a-z0-9]+")
+
+    def build_stemmer(self):
+        """Prefer Krovetz stemmer when available; fallback to Porter."""
+        try:
+            from krovetzstemmer import Stemmer as KrovetzStemmer
+            return KrovetzStemmer(), "krovetz"
+        except Exception:
+            return PorterStemmer(), "porter"
+
+    def stem_token(self, token):
+        """Stem one token using the configured stemmer."""
+        return self.stemmer.stem(token)
 
     def extract_text_with_weights(self, html_content):
         """Extract text from HTML with importance weights in a single pass"""
@@ -51,44 +65,40 @@ class InvertedIndex:
             print(f"Error parsing HTML: {e}")
             return "", ""
 
-    def tokenize(self, text):
-        """
-        Tokenize text by splitting on any character that's not alphanumeric
-        Returns a list of tokens
-        """
-        tokens = re.findall(r'[a-z0-9]+', text.lower())
-        return tokens
-
-    def compute_term_frequency(self, tokens):
-        """Compute term frequency for each token in a document"""
+    def compute_stemmed_term_frequency(self, text):
+        """Tokenize, stem, and count terms directly from raw text."""
         term_freq = defaultdict(int)
-        for token in tokens:
-            term_freq[token] += 1
+        stem = self.stem_token
+        for token in self.token_pattern.findall(text.lower()):
+            term_freq[stem(token)] += 1
         return term_freq
 
-    def add_weighted_frequency(self, term_freq, tokens, weight):
-        """Add weighted term frequency to existing frequency dict"""
-        for token in tokens:
-            term_freq[token] += weight
+    def compute_positions_and_term_frequency(self, text):
+        """Tokenize, stem, count frequency, and store token positions."""
+        term_freq = defaultdict(int)
+        term_positions = defaultdict(list)
+        stem = self.stem_token
+        position = 0
+        for token in self.token_pattern.findall(text.lower()):
+            stemmed = stem(token)
+            term_freq[stemmed] += 1
+            term_positions[stemmed].append(position)
+            position += 1
+        return term_freq, term_positions
 
     def add_document(self, doc_id, url, html_content):
         """Process a single document and add it to the index"""
         all_text, important_text = self.extract_text_with_weights(html_content)
 
-        all_tokens = self.tokenize(all_text)
-        all_tokens = [self.stemmer.stem(token) for token in all_tokens]
-
-        important_tokens = self.tokenize(important_text)
-        important_tokens = [self.stemmer.stem(token) for token in important_tokens]
-
-        term_freq = self.compute_term_frequency(all_tokens)
-
-        self.add_weighted_frequency(term_freq, important_tokens, 1)
+        term_freq, term_positions = self.compute_positions_and_term_frequency(all_text)
+        important_term_freq = self.compute_stemmed_term_frequency(important_text)
+        for token, freq in important_term_freq.items():
+            term_freq[token] += freq
 
         total = 0
         for token, freq in term_freq.items():
-            posting = Posting(doc_id, freq)
-            self.index[token].append(posting)
+            positions = term_positions.get(token, [])
+            self.index[token].append((doc_id, freq, positions))
             total += freq
 
         self.doc_id_to_url_total_words[doc_id] = (url, total)
@@ -96,7 +106,7 @@ class InvertedIndex:
 
     def build_from_directory(self, directory_path):
         """
-        Build index from all JSON files in the directory
+        Build index from all JSON files in the directory.
         """
         print(f"Building index from: {directory_path}")
 
@@ -122,9 +132,10 @@ class InvertedIndex:
             except Exception as e:
                 print(f"Error processing {json_file}: {e}")
 
+        self.unique_token_count = len(self.index)
         print(f"Index building complete!")
         print(f"Total documents indexed: {self.doc_count}")
-        print(f"Total unique tokens: {len(self.index)}")
+        print(f"Total unique tokens: {self.unique_token_count}")
 
     def save_to_disk(self, output_path):
         """Save the inverted index to disk using pickle"""
@@ -135,9 +146,58 @@ class InvertedIndex:
         }
 
         with open(output_path, 'wb') as f:
-            pickle.dump(index_data, f)
+            pickle.dump(index_data, f, protocol=pickle.HIGHEST_PROTOCOL)
 
         print(f"Index saved to: {output_path}")
+
+    def get_shard_key(self, term):
+        """Return shard key from the first character of term."""
+        first = term[0] if term else "_"
+        return first if first.isalnum() else "_"
+
+    def clear_old_index_files(self, index_dir):
+        """Remove old generated index files before writing new ones."""
+        if not os.path.exists(index_dir):
+            return
+
+        for file in os.listdir(index_dir):
+            file_path = os.path.join(index_dir, file)
+            if file.startswith("index_") and file.endswith(".pkl"):
+                os.remove(file_path)
+            elif file in {"doc_map.pkl", "meta.pkl"}:
+                os.remove(file_path)
+
+    def save_sharded_index(self, index_dir):
+        """Save postings split by term prefix into index/index_<prefix>.pkl files."""
+        os.makedirs(index_dir, exist_ok=True)
+        self.clear_old_index_files(index_dir)
+
+        shards = defaultdict(dict)
+        for term, postings in self.index.items():
+            shard_key = self.get_shard_key(term)
+            shard_file = f"index_{shard_key}.pkl"
+            shards[shard_file][term] = postings
+
+        for shard_file, shard_data in shards.items():
+            shard_path = os.path.join(index_dir, shard_file)
+            with open(shard_path, "wb") as f:
+                pickle.dump(shard_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        doc_map_path = os.path.join(index_dir, "doc_map.pkl")
+        with open(doc_map_path, "wb") as f:
+            pickle.dump(self.doc_id_to_url_total_words, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        metadata = {
+            "doc_count": self.doc_count,
+            "unique_tokens": len(self.index),
+            "shards": sorted(shards.keys()),
+            "doc_map_file": "doc_map.pkl"
+        }
+        meta_path = os.path.join(index_dir, "meta.pkl")
+        with open(meta_path, "wb") as f:
+            pickle.dump(metadata, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        print(f"Sharded index saved to: {index_dir}")
 
     def get_index_size(self, file_path):
         """Get the size of the index file in KB"""
@@ -145,15 +205,29 @@ class InvertedIndex:
         size_kb = size_bytes / 1024
         return size_kb
 
-    def print_analytics(self, index_file_path):
+    def get_directory_size_kb(self, directory_path):
+        """Get total size of files in a directory in KB."""
+        total_bytes = 0
+        for root, _, files in os.walk(directory_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                total_bytes += os.path.getsize(file_path)
+        return total_bytes / 1024
+
+    def print_analytics(self, index_path):
         """Print analytics about the index"""
-        size_kb = self.get_index_size(index_file_path)
+        if os.path.isdir(index_path):
+            size_kb = self.get_directory_size_kb(index_path)
+        else:
+            size_kb = self.get_index_size(index_path)
+
+        unique_tokens = self.unique_token_count if self.unique_token_count else len(self.index)
 
         print("\n" + "=" * 50)
         print("INVERTED INDEX ANALYTICS")
         print("=" * 50)
         print(f"Number of indexed documents: {self.doc_count}")
-        print(f"Number of unique tokens: {len(self.index)}")
+        print(f"Number of unique tokens: {unique_tokens}")
         print(f"Total size of index on disk: {size_kb:.2f} KB")
         print("=" * 50)
 
@@ -161,15 +235,16 @@ class InvertedIndex:
 def main():
     """Main function to build the inverted index"""
     dev_folder = "DEV"
-    output_file = "inverted_index.pkl"
+    output_dir = "index"
 
     index = InvertedIndex()
+    print(f"Using stemmer: {index.stemmer_name}")
 
     index.build_from_directory(dev_folder)
 
-    index.save_to_disk(output_file)
+    index.save_sharded_index(output_dir)
 
-    index.print_analytics(output_file)
+    index.print_analytics(output_dir)
 
 
 if __name__ == "__main__":

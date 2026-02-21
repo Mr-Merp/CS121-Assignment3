@@ -1,31 +1,47 @@
-import pickle
 import os
-from indexer import Posting
-
-def load_index(index_file):
-    """Load the inverted index from disk"""
-    with open(index_file, 'rb') as f:
-        data = pickle.load(f)
-    return data
+import pickle
 
 
-def generate_report(index_file, output_file="report.txt"):
+def load_meta(index_dir):
+    """Load index metadata from disk."""
+    with open(os.path.join(index_dir, "meta.pkl"), "rb") as f:
+        return pickle.load(f)
+
+
+def load_shard(index_dir, shard_file):
+    """Load one shard file."""
+    with open(os.path.join(index_dir, shard_file), "rb") as f:
+        return pickle.load(f)
+
+
+def generate_report(index_dir="index", output_file="report.txt"):
     """Generate a detailed analytics report"""
 
-    index_data = load_index(index_file)
-    index = index_data['index']
-    doc_count = index_data['doc_count']
+    meta = load_meta(index_dir)
+    doc_count = meta["doc_count"]
+    shard_files = meta.get("shards", [])
 
-    size_bytes = os.path.getsize(index_file)
+    size_bytes = 0
+    for file in os.listdir(index_dir):
+        file_path = os.path.join(index_dir, file)
+        if os.path.isfile(file_path):
+            size_bytes += os.path.getsize(file_path)
     size_kb = size_bytes / 1024
 
-    unique_tokens = len(index)
+    unique_tokens = meta.get("unique_tokens", 0)
 
-    total_postings = sum(len(postings) for postings in index.values())
+    total_postings = 0
+    token_doc_counts = []
+    for shard_file in shard_files:
+        shard_data = load_shard(index_dir, shard_file)
+        for token, postings in shard_data.items():
+            posting_count = len(postings)
+            total_postings += posting_count
+            token_doc_counts.append((token, posting_count))
+
     avg_postings_per_token = total_postings / unique_tokens if unique_tokens > 0 else 0
 
     # Find top 10 most common tokens (by number of documents they appear in)
-    token_doc_counts = [(token, len(postings)) for token, postings in index.items()]
     token_doc_counts.sort(key=lambda x: x[1], reverse=True)
     top_10_tokens = token_doc_counts[:10]
 
@@ -71,10 +87,10 @@ def generate_report(index_file, output_file="report.txt"):
 
 
 if __name__ == "__main__":
-    index_file = "inverted_index.pkl"
+    index_dir = "index"
 
-    if not os.path.exists(index_file):
-        print(f"Error: Index file '{index_file}' not found.")
+    if not os.path.exists(index_dir):
+        print(f"Error: Index directory '{index_dir}' not found.")
         print("Please run indexer.py first to build the index.")
     else:
-        generate_report(index_file)
+        generate_report(index_dir=index_dir)
