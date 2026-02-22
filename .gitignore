@@ -1,7 +1,9 @@
 DEV/
 ANALYST/
+index/
 *.pkl
 *.txt
 *.pdf
 *.zip
 *.png
+*.vscode

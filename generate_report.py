@@ -1,53 +1,46 @@
+import io
 import os
-import pickle
+import struct
+import msgpack
 import heapq
 
-
-def load_meta(index_dir):
-    """Load index metadata from disk."""
-    with open(os.path.join(index_dir, "meta.pkl"), "rb") as f:
-        return pickle.load(f)
-
-
-def load_shard(index_dir, shard_file):
-    """Load one shard file."""
-    with open(os.path.join(index_dir, shard_file), "rb") as f:
-        return pickle.load(f)
+_HEADER_FMT = ">QQQ"
+_HEADER_SIZE = struct.calcsize(_HEADER_FMT)  # 24
 
 
 def generate_report(index_dir="index", output_file="report.txt"):
-    """Generate a detailed analytics report"""
+    """Generate a detailed analytics report from a single index.msgpack file."""
+    index_file = os.path.join(index_dir, "index.msgpack")
 
-    meta = load_meta(index_dir)
+    with open(index_file, "rb") as f:
+        ioi_offset, _, meta_offset = struct.unpack(_HEADER_FMT, f.read(_HEADER_SIZE))
+
+        f.seek(meta_offset)
+        meta = next(msgpack.Unpacker(f, raw=False))
+
+        # Postings section runs from byte _HEADER_SIZE to ioi_offset.
+        # Read it all at once so we can iterate without holding the file open.
+        f.seek(_HEADER_SIZE)
+        postings_bytes = f.read(ioi_offset - _HEADER_SIZE)
+
     doc_count = meta["doc_count"]
-    shard_files = meta.get("shards", [])
-
-    size_bytes = 0
-    for file in os.listdir(index_dir):
-        file_path = os.path.join(index_dir, file)
-        if os.path.isfile(file_path):
-            size_bytes += os.path.getsize(file_path)
-    size_kb = size_bytes / 1024
-
-    unique_tokens = meta.get("unique_tokens", 0)
-    shard_count = len(shard_files)
+    unique_tokens = meta["unique_tokens"]
+    size_kb = os.path.getsize(index_file) / 1024
+    bucket_count = len(meta.get("buckets", []))
 
     total_postings = 0
     top_10_heap = []
-    for shard_file in shard_files:
-        shard_data = load_shard(index_dir, shard_file)
-        for token, postings in shard_data.items():
-            posting_count = len(postings)
-            total_postings += posting_count
 
-            if len(top_10_heap) < 10:
-                heapq.heappush(top_10_heap, (posting_count, token))
-            elif posting_count > top_10_heap[0][0]:
-                heapq.heapreplace(top_10_heap, (posting_count, token))
+    for term, postings_list in msgpack.Unpacker(io.BytesIO(postings_bytes), raw=False):
+        posting_count = len(postings_list)
+        total_postings += posting_count
+
+        if len(top_10_heap) < 10:
+            heapq.heappush(top_10_heap, (posting_count, term))
+        elif posting_count > top_10_heap[0][0]:
+            heapq.heapreplace(top_10_heap, (posting_count, term))
 
     avg_postings_per_token = total_postings / unique_tokens if unique_tokens > 0 else 0
-
-    # Top 10 most common tokens by number of documents they appear in.
     top_10_tokens = [(token, count) for count, token in sorted(top_10_heap, reverse=True)]
 
     report_lines = []
@@ -60,7 +53,7 @@ def generate_report(index_dir="index", output_file="report.txt"):
     report_lines.append("+" + "-" * 68 + "+")
     report_lines.append(f"| Number of indexed documents         | {doc_count:>28,} |")
     report_lines.append(f"| Number of unique tokens             | {unique_tokens:>28,} |")
-    report_lines.append(f"| Number of shard files               | {shard_count:>28,} |")
+    report_lines.append(f"| Number of index buckets             | {bucket_count:>28,} |")
     report_lines.append(f"| Total size of index on disk (KB)    | {size_kb:>28,.2f} |")
     report_lines.append(f"| Total postings                      | {total_postings:>28,} |")
     report_lines.append(f"| Average postings per token          | {avg_postings_per_token:>28,.2f} |")
@@ -82,7 +75,7 @@ def generate_report(index_dir="index", output_file="report.txt"):
     report_lines.append("=" * 70)
 
     report_text = "\n".join(report_lines)
-    with open(output_file, 'w', encoding='utf-8') as f:
+    with open(output_file, "w", encoding="utf-8") as f:
         f.write(report_text)
 
     print(f"Report generated: {output_file}")
@@ -95,8 +88,8 @@ def generate_report(index_dir="index", output_file="report.txt"):
 if __name__ == "__main__":
     index_dir = "index"
 
-    if not os.path.exists(index_dir):
-        print(f"Error: Index directory '{index_dir}' not found.")
+    if not os.path.exists(os.path.join(index_dir, "index.msgpack")):
+        print(f"Error: '{index_dir}/index.msgpack' not found.")
         print("Please run indexer.py first to build the index.")
     else:
         generate_report(index_dir=index_dir)

@@ -1,10 +1,14 @@
 import math
 import os
-import pickle
+import struct
+import msgpack
 import re
 import time
-from nltk.stem import PorterStemmer
+from krovetzstemmer import Stemmer as KrovetzStemmer
 from collections import defaultdict
+
+_HEADER_FMT = ">QQQ"
+_HEADER_SIZE = struct.calcsize(_HEADER_FMT)  # 24
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 PHRASE_PATTERN = re.compile(r'"([^"]+)"')
@@ -12,12 +16,8 @@ QUOTED_PATTERN = re.compile(r'"[^"]+"')
 
 
 def build_stemmer():
-    """Prefer Krovetz stemmer when available; fallback to Porter."""
-    try:
-        from krovetzstemmer import Stemmer as KrovetzStemmer
-        return KrovetzStemmer(), "krovetz"
-    except Exception:
-        return PorterStemmer(), "porter"
+    return KrovetzStemmer(), "krovetz"
+
 
 
 def stem_token(stemmer, token):
@@ -25,16 +25,23 @@ def stem_token(stemmer, token):
     return stemmer.stem(token)
 
 
-def load_meta(index_dir="index"):
-    """Load metadata for the sharded index."""
-    with open(os.path.join(index_dir, "meta.pkl"), "rb") as f:
-        return pickle.load(f)
+def load_all_metadata(index_dir="index"):
+    """Read the 24-byte header then load meta, doc_map, and index-of-index in one pass."""
+    path = os.path.join(index_dir, "index.msgpack")
+    with open(path, "rb") as f:
+        ioi_offset, docmap_offset, meta_offset = struct.unpack(_HEADER_FMT, f.read(_HEADER_SIZE))
 
+        f.seek(meta_offset)
+        meta = next(msgpack.Unpacker(f, raw=False))
 
-def load_doc_map(index_dir="index"):
-    """Load doc_id -> (url, total_words) mapping."""
-    with open(os.path.join(index_dir, "doc_map.pkl"), "rb") as f:
-        return pickle.load(f)
+        # idk why but strict_map_key needs to be false
+        f.seek(docmap_offset)
+        doc_map = next(msgpack.Unpacker(f, raw=False, strict_map_key=False))
+
+        f.seek(ioi_offset)
+        index_of_index = next(msgpack.Unpacker(f, raw=False))
+
+    return meta, doc_map, index_of_index
 
 
 def parse_query(query, stemmer):
@@ -60,37 +67,26 @@ def parse_query(query, stemmer):
     }
 
 
-def load_term_postings(index_dir, term, shard_cache):
-    """Load postings for one term by opening only its shard file."""
-    if not term:
-        shard_key = "__"
-        fallback_key = "_"
-    else:
-        first = term[0] if term[0].isalnum() else "_"
-        if len(term) > 1:
-            second = term[1] if term[1].isalnum() else "_"
-        else:
-            second = "_"
-        shard_key = f"{first}{second}"
-        fallback_key = first
-    shard_file = f"index_{shard_key}.pkl"
-    shard_path = os.path.join(index_dir, shard_file)
+def load_term_postings(index_file, term, term_cache, index_of_index):
+    """Seek to a term's byte offset in index.msgpack and unpack only that entry.
 
-    if shard_file not in shard_cache:
-        if os.path.exists(shard_path):
-            with open(shard_path, "rb") as f:
-                shard_cache[shard_file] = pickle.load(f)
-        else:
-            fallback_file = f"index_{fallback_key}.pkl"
-            fallback_path = os.path.join(index_dir, fallback_file)
-            if os.path.exists(fallback_path):
-                if fallback_file not in shard_cache:
-                    with open(fallback_path, "rb") as f:
-                        shard_cache[fallback_file] = pickle.load(f)
-                return shard_cache[fallback_file].get(term, [])
-            shard_cache[shard_file] = {}
+    index_of_index maps term -> absolute byte offset written by the indexer.
+    Results are cached in term_cache so repeated queries avoid redundant I/O.
+    """
+    if term in term_cache:
+        return term_cache[term]
 
-    return shard_cache[shard_file].get(term, [])
+    offset = index_of_index.get(term)
+    if offset is None:
+        term_cache[term] = []
+        return []
+
+    with open(index_file, "rb") as f:
+        f.seek(offset)
+        _, postings_list = next(msgpack.Unpacker(f, raw=False))
+
+    term_cache[term] = postings_list
+    return postings_list
 
 
 def parse_posting(posting):
@@ -100,11 +96,11 @@ def parse_posting(posting):
     return posting[0], posting[1], []
 
 
-def load_postings_for_terms(index_dir, terms, shard_cache):
+def load_postings_for_terms(index_file, terms, term_cache, index_of_index):
     """Load postings for each unique term."""
     term_postings = {}
     for term in dict.fromkeys(terms):
-        term_postings[term] = load_term_postings(index_dir, term, shard_cache)
+        term_postings[term] = load_term_postings(index_file, term, term_cache, index_of_index)
     return term_postings
 
 
@@ -289,12 +285,12 @@ def rank_with_tfidf(meta, query_terms, candidate_doc_ids, term_postings, doc_map
 def main():
     """Prompt for queries and print top 5 URLs."""
     index_dir = "index"
-    meta = load_meta(index_dir)
+    index_file = os.path.join(index_dir, "index.msgpack")
+    meta, doc_map, index_of_index = load_all_metadata(index_dir)
     stemmer, _ = build_stemmer()
-    shard_cache = {}
+    term_cache = {}
     idf_cache = {}
     doc_norm_cache = {}
-    doc_map = load_doc_map(index_dir)
 
     print("Search ready. Type a query, or 'exit' to quit.")
     while True:
@@ -312,7 +308,7 @@ def main():
             print(f"Search takes {elapsed_ms:.2f} ms\n")
             continue
 
-        term_postings = load_postings_for_terms(index_dir, all_terms, shard_cache)
+        term_postings = load_postings_for_terms(index_file, all_terms, term_cache, index_of_index)
         candidates = boolean_and_retrieve(term_postings, all_terms)
 
         for phrase_terms in parsed["phrases"]:
