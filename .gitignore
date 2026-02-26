@@ -1,8 +1,8 @@
 DEV/
 ANALYST/
 index/
+.venv/
 *.pkl
-*.txt
 *.pdf
 *.zip
 *.png

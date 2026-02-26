@@ -44,6 +44,15 @@ def load_all_metadata(index_dir="index"):
     return meta, doc_map, index_of_index
 
 
+def load_qgram_index(index_dir="index"):
+    """Load optional 2-gram vocabulary index for typo correction."""
+    path = os.path.join(index_dir, "qgram2.msgpack")
+    if not os.path.exists(path):
+        return {}
+    with open(path, "rb") as f:
+        return next(msgpack.Unpacker(f, raw=False))
+
+
 def parse_query(query, stemmer):
     """Parse query into single terms and quoted phrases."""
     raw_phrases = PHRASE_PATTERN.findall(query)
@@ -65,6 +74,82 @@ def parse_query(query, stemmer):
         "phrases": phrases,
         "all_terms": all_terms,
     }
+
+
+def term_bigrams(term):
+    """Return unique 2-grams for a term using boundary markers."""
+    if not term:
+        return set()
+    padded = f"${term}$"
+    return {padded[i:i + 2] for i in range(len(padded) - 1)}
+
+
+def suggest_qgram_term(term, qgram_index, index_of_index):
+    """Suggest a replacement term from 2-gram overlap when the term is missing."""
+    if not qgram_index or term in index_of_index:
+        return term
+
+    grams = term_bigrams(term)
+    if not grams:
+        return term
+
+    candidate_overlap = defaultdict(int)
+    for gram in grams:
+        for candidate in qgram_index.get(gram, []):
+            candidate_overlap[candidate] += 1
+
+    if not candidate_overlap:
+        return term
+
+    best_term = term
+    best_score = 0.0
+    best_overlap = 0
+    best_len_gap = 10**9
+
+    for candidate, overlap in candidate_overlap.items():
+        candidate_grams = term_bigrams(candidate)
+        union_size = len(grams | candidate_grams)
+        if union_size == 0:
+            continue
+        score = overlap / union_size
+        len_gap = abs(len(candidate) - len(term))
+        if (
+            score > best_score or
+            (score == best_score and overlap > best_overlap) or
+            (score == best_score and overlap == best_overlap and len_gap < best_len_gap)
+        ):
+            best_term = candidate
+            best_score = score
+            best_overlap = overlap
+            best_len_gap = len_gap
+
+    if best_score >= 0.3:
+        return best_term
+    return term
+
+
+def apply_qgram_corrections(parsed, qgram_index, index_of_index):
+    """Correct missing query terms using the 2-gram vocabulary index."""
+    if not qgram_index:
+        return parsed
+
+    cache = {}
+
+    def fix_term(term):
+        if term in cache:
+            return cache[term]
+        corrected = suggest_qgram_term(term, qgram_index, index_of_index)
+        cache[term] = corrected
+        return corrected
+
+    parsed["terms"] = [fix_term(term) for term in parsed["terms"]]
+    parsed["phrases"] = [[fix_term(term) for term in phrase] for phrase in parsed["phrases"]]
+
+    all_terms = list(parsed["terms"])
+    for phrase_terms in parsed["phrases"]:
+        all_terms.extend(phrase_terms)
+    parsed["all_terms"] = all_terms
+    return parsed
 
 
 def load_term_postings(index_file, term, term_cache, index_of_index):
@@ -287,6 +372,7 @@ def main():
     index_dir = "index"
     index_file = os.path.join(index_dir, "index.msgpack")
     meta, doc_map, index_of_index = load_all_metadata(index_dir)
+    qgram_index = load_qgram_index(index_dir)
     stemmer, _ = build_stemmer()
     term_cache = {}
     idf_cache = {}
@@ -301,6 +387,7 @@ def main():
 
         start_time = time.perf_counter()
         parsed = parse_query(query, stemmer)
+        parsed = apply_qgram_corrections(parsed, qgram_index, index_of_index)
         all_terms = parsed["all_terms"]
         if not all_terms:
             elapsed_ms = (time.perf_counter() - start_time) * 1000

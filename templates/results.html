@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Search Results</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #ffffff;
+      color: #111827;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(255,255,255,.94);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .header-inner {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+    .logo {
+      text-decoration: none;
+      color: #111827;
+      font-size: 24px;
+      font-weight: 300;
+      letter-spacing: -0.03em;
+      white-space: nowrap;
+    }
+    .search-form {
+      flex: 1;
+      max-width: 680px;
+    }
+    .search-shell {
+      position: relative;
+      border: 1px solid #d1d5db;
+      border-radius: 9999px;
+      background: #fff;
+      transition: box-shadow .18s ease, border-color .18s ease;
+    }
+    .search-shell:hover { box-shadow: 0 4px 14px rgba(0,0,0,.06); }
+    .search-shell:focus-within {
+      border-color: #6b7280;
+      box-shadow: 0 8px 20px rgba(0,0,0,.08);
+    }
+    .icon {
+      position: absolute;
+      left: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 20px;
+      height: 20px;
+      color: #9ca3af;
+    }
+    .search-input {
+      width: 100%;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      padding: 12px 16px 12px 46px;
+      font-size: 16px;
+      color: #111827;
+    }
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 22px 20px 36px;
+    }
+    .meta {
+      color: #6b7280;
+      font-size: 14px;
+      margin-bottom: 18px;
+    }
+    .list {
+      display: grid;
+      gap: 20px;
+    }
+    article {
+      padding: 14px 0;
+      border-bottom: 1px solid #f3f4f6;
+    }
+    .host {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #4b5563;
+      font-size: 13px;
+      margin-bottom: 6px;
+      overflow-wrap: anywhere;
+    }
+    .badge {
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      background: #f3f4f6;
+      color: #4b5563;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      flex: 0 0 auto;
+    }
+    .title {
+      display: inline-block;
+      color: #111827;
+      text-decoration: none;
+      font-size: 18px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .title:hover { text-decoration: underline; }
+    .url {
+      margin-top: 6px;
+      color: #6b7280;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+    .empty {
+      margin-top: 20px;
+      border: 1px solid #e5e7eb;
+      border-radius: 16px;
+      padding: 18px;
+      color: #374151;
+      background: #fafafa;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <a href="/" class="logo">Search</a>
+      <form class="search-form" action="/search" method="get">
+        <div class="search-shell">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="7"></circle>
+            <path d="m20 20-3.5-3.5"></path>
+          </svg>
+          <input class="search-input" type="text" name="q" value="{{ data.query }}" placeholder="Search..." autofocus>
+        </div>
+      </form>
+    </div>
+  </header>
+  <main>
+    {% if data.query %}
+      <div class="meta">Top {{ data.count }} results ({{ "%.2f"|format(data.elapsed_ms) }} ms)</div>
+      {% if data.results %}
+        <section class="list">
+          {% for r in data.results %}
+            <article>
+              <div class="host">
+                <span class="badge">{{ (r.host[:1] or "S")|upper }}</span>
+                <span>{{ r.host or r.url }}</span>
+              </div>
+              <a class="title" href="{{ r.url }}" target="_blank" rel="noopener noreferrer">{{ r.title }}</a>
+              <div class="url">{{ r.url }}</div>
+            </article>
+          {% endfor %}
+        </section>
+      {% else %}
+        <div class="empty">No results.</div>
+      {% endif %}
+    {% else %}
+      <div class="empty">Enter a query to search the index.</div>
+    {% endif %}
+  </main>
+</body>
+</html>
