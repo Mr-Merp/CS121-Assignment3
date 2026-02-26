@@ -14,26 +14,32 @@ Student Ids: 63919428, 92644763, 40689120, 38943002
 
 ### 1. Indexer (`indexer.py`)
 - Parses HTML content and boosts important tags (`h1`, `h2`, `h3`, `b`, `strong`, `title`).
-- Uses stemming (Krovetz if available, otherwise Porter).
+- Uses Krovetz stemming.
 - Builds positional postings in format `(doc_id, weighted_tf, positions)`.
-- Saves sharded index files into `index/` using 2-character shard prefixes:
-  - `index/index_<2chars>.pkl`
-  - `index/meta.pkl`
-  - `index/doc_map.pkl`
+- Performs partial index offloading during indexing and merges partial indexes into a final on-disk index.
+- Saves final index files into `index/`:
+  - `index/index.msgpack` (postings + index-of-index + doc map + metadata)
+  - `index/qgram2.msgpack` (2-gram vocabulary index for typo correction)
 
 ### 2. Search (`search.py`)
-- Loads only needed shards for query terms.
+- Loads only needed term postings from `index/index.msgpack` using byte offsets.
 - Supports boolean AND retrieval.
 - Supports TF-IDF ranking.
 - Supports quoted phrase queries using positional postings.
+- Supports 2-gram typo correction for missing query terms.
 - Prints query latency in milliseconds.
 
-### 3. Report Generator (`generate_report.py`)
-- Reads `index/meta.pkl` and shard files.
+### 3. Web Interface (`search_web.py`)
+- Local Flask web interface for the search engine.
+- Reuses the same search pipeline as `search.py`.
+- Opens a browser automatically on launch.
+
+### 4. Report Generator (`generate_report.py`)
+- Reads `index/index.msgpack`.
 - Reports index analytics:
   - indexed document count
   - unique token count
-  - shard file count
+  - index bucket count
   - total postings
   - index size on disk
   - top 10 most frequent tokens by document frequency
@@ -52,5 +58,6 @@ pip install -r requirements.txt
 ```bash
 python indexer.py
 python search.py
+python search_web.py
 python generate_report.py
 ```
