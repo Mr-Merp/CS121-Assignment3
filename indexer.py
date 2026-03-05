@@ -9,6 +9,7 @@ import msgpack
 import warnings
 from tqdm import tqdm
 from krovetzstemmer import Stemmer as KrovetzStemmer
+import hashlib
 
 # Using msgpack, its 3 unit64int numbers basically which equates to 24 bits
 _HEADER_FMT = ">QQQ"
@@ -39,6 +40,7 @@ class InvertedIndex:
         self.unique_token_count = 0
         self.token_pattern = re.compile(r"[a-z0-9]+")
         self.partial_flush_count = 0
+        self.seen_hashes = set() #seen tracker hased
 
     def build_stemmer(self):
         return KrovetzStemmer(), "krovetz"
@@ -92,6 +94,11 @@ class InvertedIndex:
     def add_document(self, doc_id, url, html_content):
         """Process a single document and add it to the index"""
         all_text, important_text = self.extract_text_with_weights(html_content)
+
+        content_hash = hashlib.md5(all_text.encode('utf-8')).hexdigest()
+        if content_hash in self.seen_hashes:
+            return False
+        self.seen_hashes.add(content_hash)
 
         term_freq, term_positions = self.compute_positions_and_term_frequency(all_text)
         important_term_freq = self.compute_stemmed_term_frequency(important_text)
