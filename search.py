@@ -367,6 +367,49 @@ def rank_with_tfidf(meta, query_terms, candidate_doc_ids, term_postings, doc_map
     return scores
 
 
+def load_link_scores(index_dir):
+    pagerank = {}
+    hits = {"hubs": {}, "authorities": {}}
+    
+    try:
+        pr_path = os.path.join(index_dir, "pagerank.msgpack")
+        if os.path.exists(pr_path):
+            with open(pr_path, "rb") as f:
+                pagerank = msgpack.unpackb(f.read(), raw=False)
+    except:
+        pass
+    
+    try:
+        hits_path = os.path.join(index_dir, "hits.msgpack")
+        if os.path.exists(hits_path):
+            with open(hits_path, "rb") as f:
+                hits = msgpack.unpackb(f.read(), raw=False)
+    except:
+        pass
+    
+    return pagerank, hits
+
+def blend_scores(tfidf_scores, pagerank_scores, hits_hubs, hits_authorities, 
+                 tfidf_weight=0.5, pagerank_weight=0.3, authority_weight=0.2):
+    blended = {}
+    
+    tfidf_max = max(tfidf_scores.values()) if tfidf_scores else 1
+    pr_max = max(pagerank_scores.values()) if pagerank_scores else 1
+    auth_max = max(hits_authorities.values()) if hits_authorities else 1
+    
+    for doc_id in tfidf_scores.keys():
+        score = 0
+        if tfidf_max > 0:
+            score += tfidf_weight * (tfidf_scores.get(doc_id, 0) / tfidf_max)
+        if pr_max > 0:
+            score += pagerank_weight * (pagerank_scores.get(doc_id, 0) / pr_max)
+        if auth_max > 0:
+            score += authority_weight * (hits_authorities.get(doc_id, 0) / auth_max)
+        
+        blended[doc_id] = score
+    
+    return blended
+
 def main():
     """Prompt for queries and print top 5 URLs."""
     index_dir = "index"
