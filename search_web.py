@@ -21,6 +21,27 @@ class SearchRuntime:
         self.idf_cache = {}
         self.doc_norm_cache = {}
 
+        self.pagerank_scores, self.hits_scores = search_core.load_link_scores(index_dir)
+
+        self.pr_max = max(self.pagerank_scores.values()) if self.pagerank_scores else 1.0
+
+        auth_dict = self.hits_scores.get("authorities", {}) or {}
+        self.auth_max = max(auth_dict.values()) if auth_dict else 1.0
+
+        self.norm_pr = {
+            doc: score / self.pr_max
+            for doc, score in self.pagerank_scores.items()
+        } if self.pr_max > 0 else {}
+        self.norm_auth = {
+            doc: score / self.auth_max
+            for doc, score in auth_dict.items()
+        } if self.auth_max > 0 else {}
+
+        self.tfidf_weight = 0.5
+        self.pagerank_weight = 0.3
+        self.authority_weight = 0.2
+
+
     def query(self, raw_query):
         start_time = time.perf_counter()
         parsed = search_core.parse_query(raw_query, self.stemmer)
@@ -64,6 +85,14 @@ class SearchRuntime:
             self.idf_cache,
             self.doc_norm_cache,
         )
+
+        for doc_id in list(scores.keys()):
+            scores[doc_id] = (
+                self.tfidf_weight * scores.get(doc_id, 0.0)
+                + self.pagerank_weight * self.norm_pr.get(doc_id, 0.0)
+                + self.authority_weight * self.norm_auth.get(doc_id, 0.0)
+        )
+            
         ranked_ids = sorted(candidates, key=lambda d: scores.get(d, 0.0), reverse=True)
 
         results = []
