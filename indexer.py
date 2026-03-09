@@ -10,6 +10,7 @@ import warnings
 from tqdm import tqdm
 from krovetzstemmer import Stemmer as KrovetzStemmer
 import hashlib
+from link_analysis import LinkAnalyzer
 
 # Using msgpack, its 3 unit64int numbers basically which equates to 24 bits
 _HEADER_FMT = ">QQQ"
@@ -437,6 +438,25 @@ def main():
     index.build_from_directory(dev_folder, partials_dir=partials_dir, flush_every_docs=flush_every_docs)
     index.merge_partial_indexes_to_msgpack(partials_dir, output_dir)
     index.cleanup_partial_indexes(partials_dir)
+
+    link_analyzer = LinkAnalyzer()
+    
+    doc_id_to_content = {}
+    for root, dirs, files in os.walk(dev_folder):
+        for file in files:
+            if file.endswith('.json'):
+                try:
+                    with open(os.path.join(root, file), 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                except Exception as e:
+                    print(f"Error loading {file}: {e}")
+    
+    link_analyzer.build_graph(index.doc_id_to_url_total_words, doc_id_to_content)
+    
+    pagerank_scores = link_analyzer.pagerank(iterations=20)
+    hits_hubs, hits_authorities = link_analyzer.hits(iterations=10)
+    
+    link_analyzer.save_scores(output_dir, pagerank_scores, hits_hubs, hits_authorities)
 
     index.print_analytics(output_dir)
 
