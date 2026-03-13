@@ -415,7 +415,6 @@ def main():
     index_dir = "index"
     index_file = os.path.join(index_dir, "index.msgpack")
     meta, doc_map, index_of_index = load_all_metadata(index_dir)
-    qgram_index = load_qgram_index(index_dir)
     stemmer, _ = build_stemmer()
     term_cache = {}
     idf_cache = {}
@@ -430,7 +429,6 @@ def main():
 
         start_time = time.perf_counter()
         parsed = parse_query(query, stemmer)
-        parsed = apply_qgram_corrections(parsed, qgram_index, index_of_index)
         all_terms = parsed["all_terms"]
         if not all_terms:
             elapsed_ms = (time.perf_counter() - start_time) * 1000

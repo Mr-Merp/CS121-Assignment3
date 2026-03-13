@@ -15,7 +15,6 @@ class SearchRuntime:
         self.index_dir = index_dir
         self.index_file = os.path.join(index_dir, "index.msgpack")
         self.meta, self.doc_map, self.index_of_index = search_core.load_all_metadata(index_dir)
-        self.qgram_index = search_core.load_qgram_index(index_dir)
         self.stemmer, _ = search_core.build_stemmer()
         self.term_cache = {}
         self.idf_cache = {}
@@ -45,7 +44,6 @@ class SearchRuntime:
     def query(self, raw_query):
         start_time = time.perf_counter()
         parsed = search_core.parse_query(raw_query, self.stemmer)
-        parsed = search_core.apply_qgram_corrections(parsed, self.qgram_index, self.index_of_index)
         all_terms = parsed["all_terms"]
 
         if not all_terms:

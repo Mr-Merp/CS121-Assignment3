@@ -51,11 +51,9 @@ class InvertedIndex:
         """Stem one token using the configured stemmer."""
         return self.stemmer.stem(token)
 
-    def extract_text_with_weights(self, html_content):
+    def extract_text_with_weights(self, soup):
         """Extract text from HTML with importance weights in a single pass"""
         try:
-            soup = BeautifulSoup(html_content, 'html.parser')
-
             for script in soup(['script', 'style', 'meta', 'link']):
                 script.decompose()
 
@@ -92,9 +90,9 @@ class InvertedIndex:
             position += 1
         return term_freq, term_positions
 
-    def add_document(self, doc_id, url, html_content):
+    def add_document(self, doc_id, url, soup):
         """Process a single document and add it to the index"""
-        all_text, important_text = self.extract_text_with_weights(html_content)
+        all_text, important_text = self.extract_text_with_weights(soup)
 
         content_hash = hashlib.md5(all_text.encode('utf-8')).hexdigest()
         if content_hash in self.seen_hashes:
@@ -104,6 +102,10 @@ class InvertedIndex:
         term_freq, term_positions = self.compute_positions_and_term_frequency(all_text)
         important_term_freq = self.compute_stemmed_term_frequency(important_text)
         for token, freq in important_term_freq.items():
+            term_freq[token] += freq
+        anchor_texts = [tag.get_text(separator=' ').strip() for tag in soup.find_all('a', href=True)]
+        anchor_term_freq = self.compute_stemmed_term_frequency(' '.join(anchor_texts))
+        for token, freq in anchor_term_freq.items():
             term_freq[token] += freq
 
         total = 0
@@ -137,15 +139,15 @@ class InvertedIndex:
         for doc_id, json_file in tqdm(enumerate(json_files), total=len(json_files)):
             try:
                 with open(json_file, 'r', encoding='utf-8') as f:
-
                     data = json.load(f)
-                    url = data.get('url', '')
-                    content = data.get('content', '')
+                url = data.get('url', '')
+                content = data.get('content', '')
 
-                    self.add_document(doc_id, url, content)
+                soup = BeautifulSoup(content, 'html.parser')
+                self.add_document(doc_id, url, soup)
 
-                    if partials_dir and flush_every_docs and (self.doc_count % flush_every_docs == 0):
-                        self.flush_partial_index(partials_dir)
+                if partials_dir and flush_every_docs and (self.doc_count % flush_every_docs == 0):
+                    self.flush_partial_index(partials_dir)
 
             except Exception as e:
                 print(f"Error processing {json_file}: {e}")
